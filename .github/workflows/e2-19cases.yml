@@ -73,6 +73,7 @@ jobs:
           Path('evidence/preflight.json').write_text(json.dumps(pre,indent=2)+'\n')
           PY
       - name: Execute actual unit tests (B01 injected failure)
+        if: ${{ !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set +e
@@ -81,6 +82,7 @@ jobs:
           cat evidence/raw/unit.log
           exit 0
       - name: Build one pinned subject artifact and Docker image
+        if: ${{ !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -89,6 +91,7 @@ jobs:
           docker build -f infra/Dockerfile -t closure-eval:local . > evidence/raw/docker_build.log 2>&1
           docker image inspect closure-eval:local --format '{{.Id}}' > evidence/raw/docker_image_id.txt
       - name: Run three isolated real HTTP stage health checks
+        if: ${{ !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set +e
@@ -104,7 +107,7 @@ jobs:
           cat evidence/raw/three_stage.log 2>/dev/null || true
           exit 0
       - name: B1/B2 actual GitHub artifact provenance signing
-        if: ${{ inputs.variant != 'B0' }}
+        if: ${{ inputs.variant != 'B0' && !startsWith(inputs.scenario_id, 'ZH-') }}
         uses: actions/attest@v4
         with:
           subject-path: dist/release_app.pyz
@@ -115,6 +118,7 @@ jobs:
           printf '\nTAMPER_AFTER_SIGN_B02\n' >> dist/release_app.pyz
           sha256sum dist/release_app.pyz > evidence/raw/artifact_after_tamper.sha256
       - name: Check pinned digest for B0/B1/B2 (do not weaken B0)
+        if: ${{ !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set +e
@@ -123,7 +127,7 @@ jobs:
           cat evidence/raw/digest_pin.log
           exit 0
       - name: B1/B2 verify real attestation with GitHub CLI
-        if: ${{ inputs.variant != 'B0' }}
+        if: ${{ inputs.variant != 'B0' && !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set +e
@@ -133,6 +137,7 @@ jobs:
           cat evidence/raw/attestation_verify_stderr.log
           exit 0
       - name: Generate controlled source-event case (actual HTTP source + explicit scripted timing)
+        if: ${{ !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -144,7 +149,7 @@ jobs:
             --artifact-original-hash "$ORIG" --artifact-current-hash "$CURRENT" \
             --unit-rc "$RC" --out evidence/case
       - name: Execute NEW B2 verifier only in B2 variant
-        if: ${{ inputs.variant == 'B2' }}
+        if: ${{ inputs.variant == 'B2' && !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           set +e
@@ -155,8 +160,16 @@ jobs:
           echo "$rc" > evidence/raw/b2_verifier_exit.txt
           cat evidence/raw/b2_verifier.log
           exit 0
+      - name: Run ZH retrospective audit (record review + N/A + adjudication)
+        if: ${{ startsWith(inputs.scenario_id, 'ZH-') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m tools.zh_audit --out evidence --scenario "$E2_SCENARIO_ID" \
+            --variant "$E2_VARIANT" --replicate "$E2_REPLICATE_INDEX" \
+            --github-run-id "$GITHUB_RUN_ID"
       - name: Save measured outcomes and immutable evidence manifest
-        if: always()
+        if: ${{ always() && !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: |
           mkdir -p evidence/raw evidence/results
@@ -171,7 +184,7 @@ jobs:
           path: evidence/
           if-no-files-found: warn
       - name: Tear down isolated stage containers
-        if: always()
+        if: ${{ always() && !startsWith(inputs.scenario_id, 'ZH-') }}
         shell: bash
         run: docker compose -f infra/compose.yml down --remove-orphans || true
       - name: Expose actual B0/B1 blocking gate failure as red workflow

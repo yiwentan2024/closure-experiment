@@ -26,5 +26,14 @@ class DesignSmoke(unittest.TestCase):
         self.assertEqual(scope[0]['evidence_status'],'NFI')
         self.assertEqual(r['evidence_status'],'NFI')
     def test_real_data_cases_require_source_records(self):
+        import unittest.mock as mk
+        from pathlib import Path as _P
         for sid in ('ZH-R2','ZH-R3','ZH-R4'):
-            with self.subTest(sid=sid),self.assertRaises(RuntimeError):build(sid)
+            with self.subTest(sid=sid):
+                with mk.patch('scenarios.build_case.ZH_RECORDS', new=_P('/nonexistent/records.xlsx')):
+                    with self.assertRaises(RuntimeError):
+                        build(sid)
+                c = build(sid)
+                self.assertEqual(c['time_model'], 'OWNER_RECORDS_RETROSPECTIVE')
+                self.assertEqual(c['scope']['collector_attestation']['source_type'],
+                                 'OWNER_DECLARED_EXPORT')

@@ -13,6 +13,83 @@ SCENARIOS = {x['id']:x for x in MANIFEST['scenarios']}
 CUTOFF='2026-10-19T10:00:00Z'
 AUDIT='2026-10-21T12:00:00Z'
 
+# --- ZH retrospective cases (owner-provided records; construction rules are
+# declared in scenarios/owner_records/DERIVATION.md). Anchors are business
+# moments in the records, not free parameters; each basis is frozen here. ---
+ZH_RECORDS = ROOT/'scenarios'/'owner_records'/'owner_release_records.xlsx'
+ZH_ANCHORS = {
+  'ZH-R2': {'release':'R-FB-2026-07-8.9.3.6','cutoff_local':'2026-07-29 08:45:05',
+            'basis':'last ingestion moment of the round (owner +5s receive convention); decision is stable across the 08:40/08:45 anchor family'},
+  'ZH-R3': {'release':'R-FB-2026-08-8.9.3.6-P1','cutoff_local':'2026-08-12 09:55:05',
+            'basis':'release-window end = ingestion of the second deployment; the 10:56 post-release re-adjudication deliberately remains post-cutoff; title-face 11:00/11:10 treated as declared anonymization drift'},
+  'ZH-R4': {'release':'R-FB-2026-08-NORMAL-07','cutoff_local':'2026-08-18 14:12:05',
+            'basis':'ingestion of the recorded deployment event itself; the identity-pending signal is the subject'},
+}
+ZH_AUDIT_UTC = '2026-10-20T14:45:00Z'   # workbook export time from the package's own v23 manifest
+ZH_DECISION = {'admitted':'RESOLVED','rejected':'RESOLVED','noncandidate':'RESOLVED','unresolved':'UNRESOLVED'}
+
+def _zh_utc(local):
+    d=dt.datetime.strptime(local,'%Y-%m-%d %H:%M:%S').replace(tzinfo=dt.timezone(dt.timedelta(hours=8)))
+    return d.astimezone(dt.timezone.utc).isoformat(timespec='seconds').replace('+00:00','Z')
+
+def zh_build(sid):
+    if not ZH_RECORDS.exists():
+        raise RuntimeError(f'{sid}: BLOCKED_REAL_DATA — owner record export not present in scenarios/owner_records/')
+    from scenarios.owner_records_select import parse_xlsx
+    _hdr, all_rows = parse_xlsx(ZH_RECORDS)
+    a=ZH_ANCHORS[sid]
+    rows=[r for r in all_rows if r['release_id']==a['release']]
+    cutoff=_zh_utc(a['cutoff_local'])
+    raw=[]
+    for r in rows:
+        if any(x['signal_id']==r['signal_id'] for x in raw):
+            continue   # version rows are disposition records, not new signal arrivals
+        payload={k:v for k,v in r.items() if k!='source_row'}   # verbatim owner record
+        raw.append({'signal_id':r['signal_id'],'source_id':'att-02-ledger',
+                    'event_time':_zh_utc(r['operation_time']),'ingest_time':_zh_utc(r['operation_receive_time']),
+                    'payload':payload,'payload_sha256':sha(payload)})
+    # effective disposition per signal: latest non-provisional version (as-of rule);
+    # a signal with only a provisional record keeps zero effective dispositions.
+    disp=[];cands=[]
+    for sid_ in dict.fromkeys(r['signal_id'] for r in rows):
+        versions=[r for r in rows if r['signal_id']==sid_ and r['disposition']!='provisional']
+        if versions:
+            d=max(versions,key=lambda r:int(r['version']))
+            decision=ZH_DECISION[d['disposition']]
+            disp.append({'disposition_id':d['operation_id'],'signal_id':sid_,'decision':decision,
+                         'decision_time':_zh_utc(d['operation_time']),'actor':d['actor_anon']+' / '+d['role_at_time'],
+                         'effective':True,'reason':f"owner ledger disposition={d['disposition']}"})
+            cands.append({'candidate_id':'CAND-'+sid_,'signal_id':sid_,'disposition_id':d['operation_id'],
+                          'state':'RESOLVED' if decision=='RESOLVED' else 'UNRESOLVED'})
+    gates=[{'gate_id':'G-'+r['signal_id'],'required':True,
+            'status':('PASS' if r['disposition']=='admitted' else 'FAIL'),
+            'evaluated_at':_zh_utc(r['operation_time'])}
+           for r in rows if r['signal_type'] in ('approval','deployment')]   # declared gate construction
+    from scenarios.owner_records_select import sha256_file as _sha, RAW_DEFAULT, XLSX_NAME
+    att={'sha256': _sha(RAW_DEFAULT / XLSX_NAME) if (RAW_DEFAULT / XLSX_NAME).is_file() else '',
+         'export_query_or_filter': 'SELECT * FROM disposition audit history (provider full export, no filter)',
+         'export_tool_version': 'provider export pipeline'}
+    case={
+      'schema_version':'E2-case-1','release_id':a['release'],
+      'source_cutoff':cutoff,'audit_time':ZH_AUDIT_UTC,
+      'policy':{'version':'ZH-RETRO-V1','waivable_gates':[],'waiver_approvers':[],'exclusion_authorities':[]},
+      'scope':{'service_id':'owner-release-ledger','approved_sources':['att-02-ledger'],
+               'finding_observation_complete':False,   # absence attested, not invented
+               'collector_attestation':{'complete':True,
+                    'query_rule_hash':hashlib.sha256(att['export_query_or_filter'].encode('utf-8')).hexdigest(),
+                    'collector_version':att['export_tool_version'],
+                    'source_type':'OWNER_DECLARED_EXPORT','inventory_sha256':''}},
+      'raw_signals':raw,'dispositions':disp,'candidates':cands,'gates':gates,
+      'artifact':{},     # records carry no artifact digests; absence is faithful
+      'snapshot':{},     # no snapshot records in the owner ledger
+      'findings':[],
+      'time_model':'OWNER_RECORDS_RETROSPECTIVE',
+      'zh_anchor':{'cutoff_basis':a['basis'],'audit_time_basis':'v23 manifest export_time_utc (declared)',
+                   'source_records_sha256':att['sha256']},
+    }
+    case['scope']['collector_attestation']['inventory_sha256']=sha(raw)
+    return case
+
 def base_case():
     raw=[];disp=[];cands=[]
     for ix, (sid, tm) in enumerate([('SIG-001','09:10:00'),('SIG-002','09:15:00'),('SIG-003','09:20:00')]):
@@ -105,7 +182,7 @@ def build(sid, stage_dir=None):
     if sid not in SCENARIOS:
         raise ValueError(f'Unknown scenario: {sid}')
     if SCENARIOS[sid]['source'].startswith('REAL_'):
-        raise RuntimeError(f'{sid}: BLOCKED — requires actual independent project export and source verification; no fake fixture generated')
+        return zh_build(sid)
     c=base_case()
     if stage_dir is not None:c=incorporate_live_stage_observations(c,stage_dir)
     target_sid=c['raw_signals'][1]['signal_id']

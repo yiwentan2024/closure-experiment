@@ -14,7 +14,9 @@ def main():
     for scene in MANIFEST['scenarios']:
         sid=scene['id']
         if scene['source']!='CONTROLLED':
-            rows.append({'scenario_id':sid,'execution':'BLOCKED_SOURCE_REQUIRED','pass':None})
+            case=build(sid); out=verify(case)
+            rows.append({'scenario_id':sid,'execution':'RETRO_AUDIT',
+                         'decision':out['machine_decision'],'codes':out['failure_codes']})
             continue
         case=build(sid)
         out=verify(case)

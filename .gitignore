@@ -5,3 +5,5 @@ dist/
 runs/*
 !runs/.gitkeep
 e.env
+!runs/zh_retro/
+.~*
