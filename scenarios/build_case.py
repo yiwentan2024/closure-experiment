@@ -65,8 +65,8 @@ def zh_build(sid):
             'status':('PASS' if r['disposition']=='admitted' else 'FAIL'),
             'evaluated_at':_zh_utc(r['operation_time'])}
            for r in rows if r['signal_type'] in ('approval','deployment')]   # declared gate construction
-    from scenarios.owner_records_select import sha256_file as _sha, RAW_DEFAULT, XLSX_NAME
-    att={'sha256': _sha(RAW_DEFAULT / XLSX_NAME) if (RAW_DEFAULT / XLSX_NAME).is_file() else '',
+    SOURCE_SHA256 = '5ba663605096de7b4ea65fb5d682ddbdb78b2e6aa3c064bf106637f632379459'
+    att={'sha256': SOURCE_SHA256,
          'export_query_or_filter': 'SELECT * FROM disposition audit history (provider full export, no filter)',
          'export_tool_version': 'provider export pipeline'}
     case={
